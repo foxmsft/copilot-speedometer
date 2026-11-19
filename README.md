@@ -23,6 +23,8 @@ The script copies the extension to `$env:COPILOT_HOME\extensions\copilot-speedom
 
 Auto is shown as the selected mode; completed calls and averages use the model reported for the actual call. Subagents and background usage are excluded when identified. The last 1,000 calls are summarized; the current local session journal can restore completed usage and finalized-message timings after reload (up to its last 8 MiB). Live and durable usage records are deduplicated by accounting identity. The SDK history is a fallback when a local journal cannot be read. Live deltas are transient and cannot be reconstructed.
 
+**Session statistics** use Copilot’s accumulated usage for the current conversation, including resumed usage and any subagent calls Copilot attributes to it. The panel shows accounted model calls, user-initiated API requests, cumulative model API time, and input, output, and total tokens by model and across the session. Cached tokens are already part of input, and reasoning tokens can already be part of output; neither is added again. Input counts each call’s context, including repeated context. If Copilot cannot report its totals, the panel labels the recorded subtotal from available checkpoints and usage events as potentially incomplete.
+
 The extension uses an ephemeral loopback server and makes no external network requests. It does not display or keep prompt, response, reasoning, or tool text. It reads only enough text to identify visible chunks and count their bytes.
 
 ## Development

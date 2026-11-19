@@ -2,9 +2,20 @@ import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { Speedometer } from "./metrics.mjs";
 import { startServer } from "./server.mjs";
 import { readJournal } from "./history.mjs";
+import { SessionUsage } from "./session-usage.mjs";
 
 const servers = new Map();
 const meter = new Speedometer(process.env.SESSION_ID);
+const usage = new SessionUsage();
+const dashboard = {
+    snapshot: (now = Date.now(), withChart = true) => ({
+        ...meter.snapshot(now, withChart), sessionUsage: usage.snapshot(),
+    }),
+};
+let refreshTimer;
+let refreshPending = false;
+let refreshing = false;
+let usageError = null;
 
 const session = await joinSession({
     streaming: true,
@@ -12,24 +23,25 @@ const session = await joinSession({
         createCanvas({
             id: "copilot-speedometer",
             displayName: "Copilot Speedometer",
-            description: "See this session’s live visible generation speed, response latency, and per-model averages.",
+            description: "See generation speed, response latency, and current-session token totals by model.",
             inputSchema: { type: ["object", "null"], additionalProperties: false },
             actions: [
                 {
                     name: "snapshot",
                     description: "Read the current session’s measurements and observed SDK event counts, without message text.",
-                    handler: () => meter.snapshot(Date.now(), false),
+                    handler: () => dashboard.snapshot(Date.now(), false),
                 },
             ],
             open: async (ctx) => {
                 let entry = servers.get(ctx.instanceId);
                 if (!entry) {
-                    entry = startServer(meter).catch((error) => {
+                    entry = startServer(dashboard).catch((error) => {
                         if (servers.get(ctx.instanceId) === entry) servers.delete(ctx.instanceId);
                         throw error;
                     });
                     servers.set(ctx.instanceId, entry);
                 }
+                queueMetricsRefresh();
                 return { title: "Copilot Speedometer", url: (await entry).url };
             },
             onClose: async (ctx) => {
@@ -43,10 +55,40 @@ const session = await joinSession({
     ],
 });
 
+function queueMetricsRefresh() {
+    refreshPending = true;
+    refreshTimer ??= setTimeout(() => {
+        refreshTimer = undefined;
+        void refreshMetrics();
+    }, 350);
+}
+
+async function refreshMetrics() {
+    if (refreshing) return;
+    refreshPending = false;
+    refreshing = true;
+    try {
+        usage.setMetrics(await session.rpc.usage.getMetrics());
+        usageError = null;
+    } catch (error) {
+        const failure = `${error.code ?? error.name}: ${error.message}`;
+        if (failure !== usageError) console.error(`Speedometer session usage unavailable (${failure}); using recorded usage.`);
+        usageError = failure;
+        usage.useFallback();
+    } finally {
+        refreshing = false;
+        if (refreshPending) queueMetricsRefresh();
+    }
+}
+
 // Backfill the durable receipts before applying queued live events. The same
 // completion can appear as both an SDK usage event and an accounting receipt.
 let pending = [];
 session.on((event) => {
+    usage.ingest(event);
+    if (["assistant.usage", "session.usage_record", "session.usage_checkpoint", "session.idle"].includes(event.type)) {
+        queueMetricsRefresh();
+    }
     const received = Date.now();
     if (pending) pending.push([event, received]);
     else meter.ingest(event, "sdk", received);
@@ -63,6 +105,7 @@ async function loadHistory() {
 
 void loadHistory().then(
     ({ events, limited }) => {
+        for (const event of events) usage.ingest(event);
         const cutoff = Math.min(...pending.map(([event]) => Date.parse(event.timestamp)).filter(Number.isFinite));
         meter.finishBackfill(events.filter((event) => Date.parse(event.timestamp) < cutoff), limited);
     },
@@ -73,6 +116,7 @@ void loadHistory().then(
 ).finally(() => {
     for (const [event, received] of pending) meter.ingest(event, "sdk", received);
     pending = null;
+    queueMetricsRefresh();
     const revision = meter.selectionRevision;
     void session.rpc.model.getCurrent().then(
         ({ modelId, providerId }) => meter.setSelection(modelId, providerId, revision),

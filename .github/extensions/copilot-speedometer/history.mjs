@@ -6,6 +6,7 @@ const READ_LIMIT = 8 * 1024 * 1024;
 const HISTORY_TYPES = new Set([
     "session.start", "session.model_change", "session.model_deselected", "user.message",
     "assistant.turn_start", "assistant.turn_end", "assistant.message", "abort", "session.usage_record",
+    "session.usage_checkpoint",
 ]);
 
 export async function readJournal(sessionId, home = process.env.COPILOT_HOME || join(homedir(), ".copilot")) {

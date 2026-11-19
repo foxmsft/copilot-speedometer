@@ -6,6 +6,7 @@ import test from "node:test";
 import { readJournal } from "../.github/extensions/copilot-speedometer/history.mjs";
 import { Speedometer } from "../.github/extensions/copilot-speedometer/metrics.mjs";
 import { startServer } from "../.github/extensions/copilot-speedometer/server.mjs";
+import { SessionUsage } from "../.github/extensions/copilot-speedometer/session-usage.mjs";
 
 const sessionId = "11111111-2222-4333-8444-555555555555";
 const time = Date.UTC(2026, 10, 19);
@@ -19,6 +20,59 @@ const startQuery = (meter, n = 1, ms = 0) => {
     ingest(meter, "assistant.turn_start", ms + 10, data);
     return data;
 };
+
+const modelUsage = (modelId, providerId, inputTokens, outputTokens, calls = 1) => ({
+    modelId, provider: { id: providerId, label: providerId },
+    metrics: {
+        requests: { count: calls },
+        usage: { inputTokens, outputTokens, cacheReadTokens: 30, cacheWriteTokens: 10, reasoningTokens: 5 },
+    },
+});
+
+test("SDK session totals count input and output once and keep provider/model attribution", () => {
+    const usage = new SessionUsage();
+    const providerModelMetrics = [modelUsage("model", "copilot", 80, 20, 2), modelUsage("model", "local", 40, 10)];
+    usage.setMetrics({
+        providerModelMetrics,
+        modelMetrics: { model: modelUsage("model", null, 120, 30, 3).metrics },
+        totalUserRequests: 2, totalApiDurationMs: 1800,
+    });
+    const state = usage.snapshot();
+    assert.equal(state.source, "sdk");
+    assert.deepEqual(state.models.map(({ model, provider, input, output, total }) => [model, provider, input, output, total]), [
+        ["model", "copilot", 80, 20, 100],
+        ["model", "local", 40, 10, 50],
+    ]);
+    assert.deepEqual([state.input, state.output, state.total, state.calls, state.userRequests, state.apiDurationMs], [120, 30, 150, 3, 2, 1800]);
+    usage.setMetrics({ modelMetrics: { model: modelUsage("model", null, 150, 35, 4).metrics } });
+    assert.equal(usage.snapshot().total, 185);
+    assert.equal(usage.snapshot().models[0].provider, null);
+});
+
+test("recorded usage restores a checkpoint and deduplicates replayed receipts and SDK events", () => {
+    const usage = new SessionUsage();
+    const call = (sequence, data = {}) => ({
+        model: "model", provider: { id: "copilot" }, inputTokens: 25, outputTokens: 5,
+        cacheReadTokens: 10, reasoningTokens: 2, apiCallId: `call-${sequence}`,
+        accounting: { sourceSessionId: sessionId, sequence }, ...data,
+    });
+    usage.ingest(event("session.usage_record", 10, { usage: call(1) }));
+    usage.ingest(event("session.usage_checkpoint", 11, {
+        providerModelMetrics: [modelUsage("model", "copilot", 100, 20, 5)],
+        usageAccountingWatermarks: { [sessionId]: 5 },
+    }, { checkpoint: true }));
+    usage.ingest(event("assistant.usage", 12, call(3)));
+    usage.ingest(event("assistant.usage", 13, call(6, { accounting: undefined })));
+    usage.ingest(event("session.usage_record", 14, { usage: call(6) }));
+    usage.ingest(event("assistant.usage", 15, call(6)));
+    usage.ingest(event("assistant.usage", 16, call(7, { model: "subagent-model", interactionType: "conversation-subagent" }), { agentId: "subagent" }));
+    usage.useFallback();
+    const state = usage.snapshot();
+    assert.equal(state.source, "recorded");
+    assert.deepEqual(state.models.map(({ model, total }) => [model, total]), [["model", 150], ["subagent-model", 30]]);
+    assert.deepEqual([state.input, state.output, state.total, state.calls], [150, 30, 180, 7]);
+    assert.equal(state.userRequests, null);
+});
 
 test("rolls only visible root deltas, preserves chart gaps, and resets on the next query", () => {
     const meter = new Speedometer(sessionId);

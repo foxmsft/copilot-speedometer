@@ -23,6 +23,7 @@ header, .primary, .card { margin-bottom: 12px; }
 h1, h2, p { margin: 0; }
 h1 { font-size: var(--text-title-large, 25px); line-height: 1.2; margin-bottom: 8px; }
 h2 { font-size: 15px; margin-bottom: 6px; }
+h3 { font-size: 14px; margin: 12px 0 0; }
 p + p { margin-top: 6px; }
 .eyebrow { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.13em; margin-bottom: 5px; }
 .muted { color: var(--muted); }
@@ -40,6 +41,7 @@ p + p { margin-top: 6px; }
 .chart text { fill: var(--muted); font-size: 15px; }
 #line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .call-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 12px 0 0; }
+#usage-source { margin-top: 8px; }
 dt { color: var(--muted); font-size: 12px; }
 dd { margin: 2px 0 0; font-weight: 650; font-variant-numeric: tabular-nums; }
 .table-wrap { overflow-x: auto; margin: 6px 0; }

@@ -12,6 +12,43 @@ const ms = (n) => n == null ? missing : n < 1_000 ? `${Math.round(n)} ms` : `${n
 const pair = ({ n, mean, median }, display) => n ? `${display(mean)} / ${display(median)} (${n})` : missing;
 const scaleFor = (peak) => Math.max(100, Math.ceil(peak / 100) * 100);
 let modelTableKey;
+let renderedUsage;
+
+function renderUsage(usage) {
+    const key = JSON.stringify(usage);
+    if (key === renderedUsage) return;
+    renderedUsage = key;
+    const { source, models, total, input, output, calls, userRequests, apiDurationMs } = usage;
+    set("session-total", number(total));
+    set("session-input", number(input));
+    set("session-output", number(output));
+    set("session-calls", number(calls));
+    set("session-requests", number(userRequests));
+    set("session-duration", ms(apiDurationMs));
+    set("usage-source", {
+        sdk: "Accumulated usage reported by Copilot for this session.",
+        recorded: "Copilot’s session totals are unavailable. Showing recorded usage, which may be incomplete.",
+        unavailable: "No session usage available.",
+        loading: "Loading session totals...",
+    }[source]);
+    const rows = models.map((m) => {
+        const row = document.createElement("tr");
+        const label = document.createElement("th");
+        label.scope = "row";
+        label.textContent = m.provider ? `${m.name} (${m.provider})` : m.name;
+        row.append(label);
+        for (const tokens of [m.input, m.output, m.total]) row.insertCell().textContent = number(tokens);
+        return row;
+    });
+    if (!rows.length) {
+        const row = document.createElement("tr");
+        const cell = row.insertCell();
+        cell.colSpan = 4;
+        cell.textContent = source === "loading" ? "Loading..." : "No model usage reported.";
+        rows.push(row);
+    }
+    el("token-models").replaceChildren(...rows);
+}
 
 function renderModels(models, selected) {
     const key = JSON.stringify([models, selected]);
@@ -42,7 +79,7 @@ function renderModels(models, selected) {
     el("models").replaceChildren(...rows);
 }
 
-function render({ selected, query, stream, latestCall, models, history, signals }) {
+function render({ selected, query, stream, latestCall, models, history, signals, sessionUsage }) {
     set("selected", selected.model === "auto" ? "Auto" : selected.model || "Unknown");
     const max = scaleFor(Math.max(stream.rate ?? 0, ...stream.series.map(([, rate]) => rate ?? 0)));
     set("rate", number(stream.rate));
@@ -82,6 +119,7 @@ function render({ selected, query, stream, latestCall, models, history, signals 
     set("ttft", ms(latestCall?.ttft));
     set("generation", ms(latestCall?.generationMs));
     set("duration", ms(latestCall?.duration));
+    renderUsage(sessionUsage);
     renderModels(models, selected);
     set("history", history === "unavailable" ? "Session history unavailable; showing newly observed calls only."
         : history === "limited" ? "Older calls may be unavailable; history is limited to the last 8 MiB of the session journal."
