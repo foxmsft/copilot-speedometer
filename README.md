@@ -1,0 +1,30 @@
+# Copilot Speedometer
+
+A dependency-free canvas for the local GitHub Copilot desktop app. It measures the current session, not every open chat. In a new session, ask Copilot to **open Copilot Speedometer**, then send a prompt with the canvas open.
+
+## Install for all local sessions
+
+From the repository root in PowerShell:
+
+```powershell
+.\Install-Speedometer.ps1
+```
+
+The script copies the extension to `$env:COPILOT_HOME\extensions\copilot-speedometer` (default: `~\.copilot\extensions\copilot-speedometer`). It never overwrites an existing installation. Reload extensions in an existing session or start a new one. The repo's project copy takes precedence within this repo. To uninstall, move the user extension directory out of `extensions` and reload.
+
+## Reading the canvas
+
+| Metric | What it measures |
+| --- | --- |
+| Visible speed | Estimated visible tokens per second from `assistant.message_delta`. Updated every 250 ms, with a trailing window of up to 2 s and a 30 s chart. UTF-8 bytes / 4 is a rough estimate, not the model tokenizer. Chunk batching and language affect the reading. No visible deltas means no live rate. |
+| First visible response | From SDK `user.message` admission (not the Send click) to the first nonblank visible delta. When only a completed assistant message arrives, its timestamp provides an upper bound (`≤`). |
+| Completed generation | Estimated rate after the first observable model output: `(reported output tokens − 1) / (call duration − output TTFT)`. The usage count may include reasoning or tool output; this is **not** the visible speed. Missing timings or fewer than two output tokens leave the rate blank. |
+| Model TTFT and duration | Reported API-call measurements from `assistant.usage`; not user-visible response latency. Per-model mean and median include individual sample counts. |
+
+Auto is shown as the selected mode; completed calls and averages use the model reported for the actual call. Subagents and background usage are excluded when identified. The last 1,000 calls are summarized; the current local session journal can restore completed usage and finalized-message timings after reload (up to its last 8 MiB). Live and durable usage records are deduplicated by accounting identity. The SDK history is a fallback when a local journal cannot be read. Live deltas are transient and cannot be reconstructed.
+
+The extension uses an ephemeral loopback server and makes no external network requests. It does not display or keep prompt, response, reasoning, or tool text. It reads only enough text to identify visible chunks and count their bytes.
+
+## Development
+
+Run `node --test` with a current Node.js version. Reload extensions in the app after editing the project copy. The `snapshot` canvas action reports sanitized metrics and observed event counters, useful for distinguishing actual SDK streaming from completed-only delivery.
