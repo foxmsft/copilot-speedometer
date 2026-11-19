@@ -42,6 +42,8 @@ p + p { margin-top: 6px; }
 #line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .call-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 12px 0 0; }
 #usage-source { margin-top: 8px; }
+.usage-scope { display: inline-flex; align-items: center; gap: 5px; }
+#child-coverage { margin-top: 5px; }
 dt { color: var(--muted); font-size: 12px; }
 dd { margin: 2px 0 0; font-weight: 650; font-variant-numeric: tabular-nums; }
 .table-wrap { overflow-x: auto; margin: 6px 0; }

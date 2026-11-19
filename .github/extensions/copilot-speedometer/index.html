@@ -62,13 +62,15 @@
 
     <section class="card" aria-labelledby="usage-heading">
         <h2 id="usage-heading">Session statistics</h2>
+        <label class="usage-scope"><input id="include-children" type="checkbox" checked aria-describedby="child-coverage"> Include child sessions</label>
+        <p id="child-coverage" class="muted" role="status">Checking for child sessions...</p>
         <dl class="call-metrics">
             <div><dt>Grand total tokens</dt><dd id="session-total">--</dd></div>
             <div><dt>Input tokens</dt><dd id="session-input">--</dd></div>
             <div><dt>Output tokens</dt><dd id="session-output">--</dd></div>
             <div><dt>Accounted model calls</dt><dd id="session-calls">--</dd></div>
-            <div><dt>User-initiated API requests</dt><dd id="session-requests">--</dd></div>
-            <div><dt>Cumulative model API time</dt><dd id="session-duration">--</dd></div>
+            <div><dt>User-initiated API requests (current session)</dt><dd id="session-requests">--</dd></div>
+            <div><dt>Cumulative model API time (current session)</dt><dd id="session-duration">--</dd></div>
         </dl>
         <p id="usage-source" class="muted">Loading session totals...</p>
         <h3 id="token-heading">Token consumption by model</h3>

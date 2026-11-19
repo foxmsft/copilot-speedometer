@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { readJournal } from "../.github/extensions/copilot-speedometer/history.mjs";
 import { Speedometer } from "../.github/extensions/copilot-speedometer/metrics.mjs";
 import { startServer } from "../.github/extensions/copilot-speedometer/server.mjs";
 import { SessionUsage } from "../.github/extensions/copilot-speedometer/session-usage.mjs";
+import { findDescendants, rollupUsage } from "../.github/extensions/copilot-speedometer/child-usage.mjs";
 
 const sessionId = "11111111-2222-4333-8444-555555555555";
 const time = Date.UTC(2026, 10, 19);
@@ -27,6 +29,106 @@ const modelUsage = (modelId, providerId, inputTokens, outputTokens, calls = 1) =
         requests: { count: calls },
         usage: { inputTokens, outputTokens, cacheReadTokens: 30, cacheWriteTokens: 10, reasoningTokens: 5 },
     },
+});
+
+test("follows actual sidebar link types across chats and workspaces, excluding unrelated work", async (t) => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const home = await mkdtemp(join(tmpdir(), "speedometer-hierarchy-"));
+    t.after(() => rm(home, { recursive: true, force: true }));
+    const db = new DatabaseSync(join(home, "data.db"));
+    const root = sessionId;
+    const child = "11111111-2222-4333-8444-555555555556";
+    const grandchild = "11111111-2222-4333-8444-555555555557";
+    const remote = "11111111-2222-4333-8444-555555555558";
+    db.exec(`
+        CREATE TABLE sessions (id TEXT, execution_location TEXT, remote_connect_target TEXT, is_cloud_worker INTEGER);
+        CREATE TABLE workspaces (id TEXT, session_id TEXT, host_id TEXT, creator_session_id TEXT);
+        CREATE TABLE workspace_session_aliases (session_id TEXT, workspace_id TEXT);
+        CREATE TABLE workspace_parent_links (child_workspace_id TEXT, parent_workspace_id TEXT, creator_session_id TEXT);
+        CREATE TABLE chat_parent_links (session_id TEXT, parent_session_id TEXT);
+        INSERT INTO sessions VALUES
+            ('${root}', 'local', NULL, 0), ('${child}', 'local', NULL, 0),
+            ('${grandchild}', 'local', NULL, 0), ('${remote}', 'cloud', NULL, 1);
+        INSERT INTO workspaces VALUES ('root-workspace', '${root}', 'local', NULL),
+            ('child-workspace', '${child}', 'local', NULL), ('unrelated-workspace', 'unrelated', 'local', NULL);
+        INSERT INTO workspace_session_aliases VALUES ('${root}', 'root-workspace');
+        INSERT INTO workspace_parent_links VALUES ('child-workspace', 'root-workspace', NULL);
+        INSERT INTO chat_parent_links VALUES ('${grandchild}', '${child}'), ('${remote}', '${root}');
+    `);
+    db.close();
+    const { descendants, limited } = await findDescendants(root, home);
+    assert.equal(limited, false);
+    assert.deepEqual(new Map(descendants.map(({ id, local }) => [id, local])),
+        new Map([[child, true], [grandchild, true], [remote, false]]));
+});
+
+test("checkbox defaults to including children and immediately switches to parent-only usage", async () => {
+    const root = new URL("../.github/extensions/copilot-speedometer/", import.meta.url);
+    const [page, script] = await Promise.all(["index.html", "speedometer.js"].map((file) => readFile(new URL(file, root), "utf8")));
+    assert.match(page, /<label[^>]*><input id="include-children" type="checkbox" checked[^>]*> Include child sessions<\/label>/);
+    let change;
+    let connection;
+    const makeNode = () => ({
+        textContent: "", checked: true, setAttribute() {}, append() {}, replaceChildren() {},
+        insertCell: () => ({}), addEventListener(type, cb) { if (type === "change") change = cb; },
+    });
+    const nodes = new Map();
+    const get = (id) => {
+        if (!nodes.has(id)) nodes.set(id, makeNode());
+        return nodes.get(id);
+    };
+    runInNewContext(script, {
+        document: { getElementById: get, createElement: makeNode },
+        EventSource: class { constructor() { connection = this; } },
+    });
+    const meter = new Speedometer(sessionId).snapshot();
+    const parent = { source: "sdk", models: [], total: 15 };
+    connection.onmessage({ data: JSON.stringify({
+        ...meter, sessionUsage: parent,
+        childUsage: { status: "complete", known: 1, included: 1, usage: { ...parent, total: 45 } },
+    }) });
+    assert.equal(get("session-total").textContent, "45");
+    get("include-children").checked = false;
+    change();
+    assert.equal(get("session-total").textContent, "15");
+    assert.equal(get("child-coverage").textContent, "Current session only.");
+    get("include-children").checked = true;
+    change();
+    assert.equal(get("session-total").textContent, "45");
+});
+
+test("rolls up only uncounted child receipts, marks remote or incomplete children, and preserves parent metrics", () => {
+    const child = "11111111-2222-4333-8444-555555555556";
+    const remote = "11111111-2222-4333-8444-555555555557";
+    const receipt = (id, sequence, input, output) => ({
+        type: "session.usage_record", accounting: { sourceSessionId: id, sequence, usageId: `${id}:${sequence}` },
+        model: "model", provider: { id: "copilot", label: "copilot" }, input, output,
+        cacheReadTokens: 30, reasoningTokens: 1,
+    });
+    const journal = (sessionId, ...events) => ({ events: [{ type: "session.start", sessionId }, ...events] });
+    const imported = receipt(child, 1, 25, 5);
+    const parentEvents = journal(sessionId, receipt(sessionId, 1, 75, 15), imported);
+    const usage = new SessionUsage();
+    usage.setMetrics({
+        modelMetrics: {}, providerModelMetrics: [modelUsage("model", "copilot", 100, 20, 2)],
+        totalUserRequests: 1, totalApiDurationMs: 2000,
+    });
+    const parent = usage.snapshot();
+    const descendants = [{ id: child, local: true }, { id: remote, local: false }];
+    const journals = new Map([[child, journal(child, imported, receipt(child, 2, 50, 10), receipt(child, 2, 50, 10))]]);
+    const result = rollupUsage(parent, { descendants }, parentEvents, journals, sessionId);
+    assert.deepEqual([result.status, result.included, result.missing], ["partial", 1, 1]);
+    assert.deepEqual(
+        [result.usage.input, result.usage.output, result.usage.total, result.usage.calls, result.usage.userRequests, result.usage.apiDurationMs],
+        [150, 30, 180, 3, 1, 2000],
+    );
+    assert.equal(parent.total, 120);
+    assert.equal(result.usage.models.length, 1);
+    const unreconciled = rollupUsage(parent, { descendants }, journal(sessionId, imported), journals, sessionId);
+    assert.deepEqual([unreconciled.status, unreconciled.included, unreconciled.usage.total], ["partial", 0, 120]);
+    journals.set(child, journal(child, imported, receipt(child, 3, 50, 10)));
+    const withGap = rollupUsage(parent, { descendants: [descendants[0]] }, parentEvents, journals, sessionId);
+    assert.deepEqual([withGap.status, withGap.missing, withGap.usage.total], ["partial", 1, 180]);
 });
 
 test("SDK session totals count input and output once and keep provider/model attribution", () => {

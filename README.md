@@ -25,6 +25,8 @@ Auto is shown as the selected mode; completed calls and averages use the model r
 
 **Session statistics** use Copilot’s accumulated usage for the current conversation, including resumed usage and any subagent calls Copilot attributes to it. The panel shows accounted model calls, user-initiated API requests, cumulative model API time, and input, output, and total tokens by model and across the session. Cached tokens are already part of input, and reasoning tokens can already be part of output; neither is added again. Input counts each call’s context, including repeated context. If Copilot cannot report its totals, the panel labels the recorded subtotal from available checkpoints and usage events as potentially incomplete.
 
+**Include child sessions** is checked when the canvas opens. It adds tokens and model call counts from verified local sidebar descendants, including nested children. Uncheck it to see only the current session’s usage. Speed, response latency, user-initiated API requests, and cumulative API time stay scoped to the current session. While open, the panel checks for newly completed child calls about every five seconds. The extension reads the desktop app’s local sidebar relationship database in read-only mode and inspects usage receipts for related sessions only. If that schema is unavailable, or cloud, remote, missing, or truncated journals prevent a verified total, the panel reports unavailable or partial coverage rather than counting missing data as zero.
+
 The extension uses an ephemeral loopback server and makes no external network requests. It does not display or keep prompt, response, reasoning, or tool text. It reads only enough text to identify visible chunks and count their bytes.
 
 ## Development

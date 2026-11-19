@@ -17,7 +17,7 @@ function providerRows(metrics) {
     }));
 }
 
-function withTotals(rows, source, extras = {}) {
+export function withTotals(rows, source, extras = {}) {
     const models = rows.map((r) => ({ ...r, total: r.input == null || r.output == null ? null : r.input + r.output }))
         .sort((a, b) => (b.total ?? -1) - (a.total ?? -1) || a.name.localeCompare(b.name));
     const totals = {};
@@ -26,6 +26,19 @@ function withTotals(rows, source, extras = {}) {
     }
     totals.total = totals.input == null || totals.output == null ? null : totals.input + totals.output;
     return { source, models, ...totals, userRequests: null, apiDurationMs: null, ...extras };
+}
+
+export function mergeUsageRows(rows) {
+    const models = new Map();
+    for (const row of rows) {
+        const key = JSON.stringify([row.model ?? null, row.providerId ?? null]);
+        const previous = models.get(key);
+        models.set(key, previous ? {
+            ...previous,
+            ...Object.fromEntries(fields.map((k) => [k, previous[k] == null || row[k] == null ? null : previous[k] + row[k]])),
+        } : row);
+    }
+    return [...models.values()];
 }
 
 export class SessionUsage {

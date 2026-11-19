@@ -13,6 +13,22 @@ const pair = ({ n, mean, median }, display) => n ? `${display(mean)} / ${display
 const scaleFor = (peak) => Math.max(100, Math.ceil(peak / 100) * 100);
 let modelTableKey;
 let renderedUsage;
+let latestUsage;
+
+function renderUsageScope() {
+    if (!latestUsage) return;
+    const { sessionUsage, childUsage } = latestUsage;
+    const include = el("include-children").checked;
+    renderUsage(include ? childUsage.usage ?? sessionUsage : sessionUsage);
+    set("child-coverage", !include ? "Current session only." : {
+        loading: "Checking for child sessions...",
+        unavailable: "Child usage unavailable. Showing current session only.",
+        complete: childUsage.known ? `${childUsage.included} child session(s) included.` : "No child sessions found.",
+        partial: `Partial child usage: ${childUsage.included} of ${childUsage.known} discovered session(s) included. Some records could not be verified or read.`,
+    }[childUsage.status]);
+}
+
+el("include-children").addEventListener("change", renderUsageScope);
 
 function renderUsage(usage) {
     const key = JSON.stringify(usage);
@@ -79,7 +95,7 @@ function renderModels(models, selected) {
     el("models").replaceChildren(...rows);
 }
 
-function render({ selected, query, stream, latestCall, models, history, signals, sessionUsage }) {
+function render({ selected, query, stream, latestCall, models, history, signals, sessionUsage, childUsage }) {
     set("selected", selected.model === "auto" ? "Auto" : selected.model || "Unknown");
     const max = scaleFor(Math.max(stream.rate ?? 0, ...stream.series.map(([, rate]) => rate ?? 0)));
     set("rate", number(stream.rate));
@@ -119,7 +135,8 @@ function render({ selected, query, stream, latestCall, models, history, signals,
     set("ttft", ms(latestCall?.ttft));
     set("generation", ms(latestCall?.generationMs));
     set("duration", ms(latestCall?.duration));
-    renderUsage(sessionUsage);
+    latestUsage = { sessionUsage, childUsage };
+    renderUsageScope();
     renderModels(models, selected);
     set("history", history === "unavailable" ? "Session history unavailable; showing newly observed calls only."
         : history === "limited" ? "Older calls may be unavailable; history is limited to the last 8 MiB of the session journal."

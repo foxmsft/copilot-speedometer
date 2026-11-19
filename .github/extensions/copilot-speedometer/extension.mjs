@@ -3,19 +3,24 @@ import { Speedometer } from "./metrics.mjs";
 import { startServer } from "./server.mjs";
 import { readJournal } from "./history.mjs";
 import { SessionUsage } from "./session-usage.mjs";
+import { createChildUsageReader } from "./child-usage.mjs";
 
 const servers = new Map();
 const meter = new Speedometer(process.env.SESSION_ID);
 const usage = new SessionUsage();
+const readChildUsage = createChildUsageReader(process.env.SESSION_ID);
+let childUsage = { status: "loading" };
 const dashboard = {
     snapshot: (now = Date.now(), withChart = true) => ({
-        ...meter.snapshot(now, withChart), sessionUsage: usage.snapshot(),
+        ...meter.snapshot(now, withChart), sessionUsage: usage.snapshot(), childUsage,
     }),
 };
 let refreshTimer;
 let refreshPending = false;
 let refreshing = false;
 let usageError = null;
+let hierarchyError = null;
+let childTimer;
 
 const session = await joinSession({
     streaming: true,
@@ -41,13 +46,19 @@ const session = await joinSession({
                     });
                     servers.set(ctx.instanceId, entry);
                 }
+                const server = await entry;
+                if (servers.size && !childTimer) childTimer = setInterval(queueMetricsRefresh, 5_000);
                 queueMetricsRefresh();
-                return { title: "Copilot Speedometer", url: (await entry).url };
+                return { title: "Copilot Speedometer", url: server.url };
             },
             onClose: async (ctx) => {
                 const entry = servers.get(ctx.instanceId);
                 if (entry) {
                     servers.delete(ctx.instanceId);
+                    if (!servers.size) {
+                        clearInterval(childTimer);
+                        childTimer = undefined;
+                    }
                     await (await entry).close();
                 }
             },
@@ -75,6 +86,17 @@ async function refreshMetrics() {
         if (failure !== usageError) console.error(`Speedometer session usage unavailable (${failure}); using recorded usage.`);
         usageError = failure;
         usage.useFallback();
+    }
+    try {
+        if (servers.size) {
+            childUsage = await readChildUsage(usage.snapshot());
+            hierarchyError = null;
+        }
+    } catch (error) {
+        const failure = error.code ?? error.name;
+        if (failure !== hierarchyError) console.error(`Speedometer child session totals unavailable (${failure}).`);
+        hierarchyError = failure;
+        childUsage = { status: "unavailable" };
     } finally {
         refreshing = false;
         if (refreshPending) queueMetricsRefresh();
